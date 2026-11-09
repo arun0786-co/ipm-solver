@@ -28,16 +28,18 @@ def reference_values(readme):
     vals = {}
     inside = False
     for line in Path(readme).read_text(errors="replace").splitlines():
-        if "PROBLEM SUMMARY TABLE" in line:
+        # the same phrases appear in the prose above, so match whole lines
+        if line.strip() == "PROBLEM SUMMARY TABLE":
             inside = True
             continue
-        if "BOUND-TYPE TABLE" in line:
+        if line.strip() == "BOUND-TYPE TABLE":
             break
         if not inside:
             continue
         parts = line.split()
-        if len(parts) >= 5 and re.match(r"^[-+]?\d\.\d+E[-+]\d+$", parts[-1]):
-            vals[parts[0].lower()] = float(parts[-1])
+        nums = [t for t in parts[1:] if re.match(r"^[-+]?\d\.\d+E[-+]\d+$", t)]
+        if len(parts) >= 5 and nums:
+            vals[parts[0].lower()] = float(nums[-1])
     return vals
 
 
