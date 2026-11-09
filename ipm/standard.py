@@ -126,10 +126,10 @@ def scale(A, passes=8):
     # equilibrate so the largest entry in each row and column is about 1
     M = (sp.diags(r) @ B @ sp.diags(s)).tocsr()
     mx = np.asarray(M.max(axis=1).todense()).ravel()
-    r *= np.where(mx > 0, 1.0 / mx, 1.0)
+    r *= 1.0 / np.where(mx > 0, mx, 1.0)
     M = (sp.diags(r) @ B @ sp.diags(s)).tocsc()
     mx = np.asarray(M.max(axis=0).todense()).ravel()
-    s *= np.where(mx > 0, 1.0 / mx, 1.0)
+    s *= 1.0 / np.where(mx > 0, mx, 1.0)
 
     r = 2.0 ** np.round(np.log2(r))
     s = 2.0 ** np.round(np.log2(s))

@@ -64,7 +64,8 @@ def presolve(lp: LinearProgram) -> PresolveResult:
         changed = False
 
         # fixed columns
-        width = u - l
+        with np.errstate(invalid="ignore"):   # inf - inf for free columns
+            width = u - l
         fix = col_on & np.isfinite(width) & (width <= 1e-12 * np.maximum(1, np.abs(l)))
         if fix.any():
             idx = np.flatnonzero(fix)
