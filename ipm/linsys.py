@@ -21,23 +21,27 @@ import scipy.sparse.linalg as spla
 HUGE = 1e128
 
 
-def cholesky_lipsol(M, block=96, tiny=1e-30):
+def cholesky_lipsol(M, block=96, tiny=1e-30, rel=0.0):
     """Lower Cholesky factor of a symmetric PSD matrix, in place.
 
-    Returns (L, skipped) where skipped counts replaced pivots. Pivots
-    below tiny * max(diag) are set to HUGE.
+    Returns (L, skipped) where skipped counts replaced pivots. A pivot is
+    replaced by HUGE when it falls below tiny * max(diag), or below
+    rel * (its own diagonal entry before elimination). The second test
+    catches cancellation in a row whose scale is far below the largest
+    one, which a single global threshold misses or overdoes.
     """
     n = M.shape[0]
     L = M
-    dmax = max(float(np.max(np.diag(L), initial=0.0)), 1e-300)
-    thresh = tiny * dmax
+    d0 = np.diag(L).copy()
+    dmax = max(float(np.max(d0, initial=0.0)), 1e-300)
+    thresh = np.maximum(tiny * dmax, rel * d0)
     skipped = 0
     for k0 in range(0, n, block):
         k1 = min(k0 + block, n)
         D = L[k0:k1, k0:k1]
         for k in range(k1 - k0):
             d = D[k, k]
-            if d <= thresh:
+            if d <= thresh[k0 + k]:
                 D[k, k] = HUGE
                 D[k + 1:, k] = 0.0
                 skipped += 1
@@ -56,7 +60,7 @@ def cholesky_lipsol(M, block=96, tiny=1e-30):
 
 
 class NormalEquations:
-    def __init__(self, A, dense_limit=9000, refine=3):
+    def __init__(self, A, dense_limit=9000, refine=3, tiny=1e-30, rel=0.0):
         self.A = sp.csr_matrix(A)
         self.At = self.A.T.tocsr()
         m = self.A.shape[0]
@@ -65,6 +69,7 @@ class NormalEquations:
         self.refine = refine
         self.skipped = 0
         self.reg = 0.0
+        self.tiny, self.rel = tiny, rel
 
     def matvec(self, v):
         return self.A @ (self.theta * (self.At @ v))
@@ -83,7 +88,7 @@ class NormalEquations:
         M = (self.A @ sp.diags(theta) @ self.At)
         if self.dense:
             M = M.toarray()
-            self.L, self.skipped = cholesky_lipsol(M)
+            self.L, self.skipped = cholesky_lipsol(M, tiny=self.tiny, rel=self.rel)
         else:
             M = M.tocsc()
             dmax = float(M.diagonal().max(initial=1.0))

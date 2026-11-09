@@ -14,6 +14,15 @@ with one factorization of A Theta A', where
 The free-column regularization rho is a proximal term; it keeps Theta
 bounded and leaves an O(rho * |dx|) error in the dual equations that the
 next iterations remove.
+
+Every column also gets a tiny primal regularization (reg_primal), which
+caps Theta at 1e14. Without a cap, Theta spans 40 orders of magnitude
+late in a degenerate run and the factorization loses whole rows
+(GREENBEA, DEGEN3). With a large cap (1e-10 here, which is common) the
+dual residual of columns that hit it cannot fall below about
+reg_primal * |dx|, so the run drifts instead of converging (FINNIS,
+PILOT). The value 1e-14, together with the per-row pivot test in
+linsys.py, was chosen on the hard Netlib problems; see the README.
 """
 
 from dataclasses import dataclass, field
@@ -47,8 +56,9 @@ def _max_step(x, dx):
 
 
 def solve_standard(A, b, c, u, free=None, tol=1e-8, max_iter=200,
-                   verbose=False, eta=0.9995, reg_primal=1e-10,
-                   reg_free=1e-8, dense_limit=9000, correctors=2):
+                   verbose=False, eta=0.9995, reg_primal=1e-14,
+                   reg_free=1e-8, dense_limit=9000, correctors=2,
+                   piv_tiny=1e-30, piv_rel=1e-14):
     m, n = A.shape
     free = np.zeros(n, dtype=bool) if free is None else np.asarray(free, bool)
     B = ~free
@@ -59,7 +69,7 @@ def solve_standard(A, b, c, u, free=None, tol=1e-8, max_iter=200,
     nU = U.size
     N = max(int(B.sum()) + nU, 1)
     At = A.T.tocsr()
-    ne = NormalEquations(A, dense_limit=dense_limit)
+    ne = NormalEquations(A, dense_limit=dense_limit, tiny=piv_tiny, rel=piv_rel)
     bnorm = 1.0 + np.linalg.norm(b)
     cnorm = 1.0 + np.linalg.norm(c)
     unorm = 1.0 + (np.linalg.norm(uU) if nU else 0.0)
