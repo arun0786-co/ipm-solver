@@ -124,3 +124,70 @@ class NormalEquations:
                 break
             x, res, best = xn, resn, nn
         return x
+
+
+class AugmentedSystem:
+    """Solves the quasi-definite KKT system of a convex QP step
+
+        [ -(Q + Theta^{-1})   A' ] [dx]   [r1]
+        [        A        delta I] [dy] = [r2]
+
+    With Q present the normal matrix A (Q + Theta^{-1})^{-1} A' is no longer
+    a product of sparse factors, so the augmented system is factored
+    directly. delta is a tiny dual regularization that keeps the matrix
+    nonsingular when A has dependent rows; iterative refinement against
+    the unregularized operator removes its effect.
+    """
+
+    def __init__(self, A, Q, dense_limit=3000, refine=3, delta=1e-10):
+        self.A = sp.csr_matrix(A)
+        self.Q = sp.csr_matrix(Q)
+        m, n = self.A.shape
+        self.m, self.n = m, n
+        dense_Q = self.Q.nnz > 0.1 * n * n
+        self.dense = (m + n) <= dense_limit or dense_Q
+        if self.dense:
+            self.Qd = self.Q.toarray()
+            self.Ad = self.A.toarray()
+        self.refine = refine
+        self.delta = delta
+
+    def matvec(self, dx, dy):
+        r1 = -(self.Q @ dx) - dx / self.theta + self.A.T @ dy
+        r2 = self.A @ dx
+        return r1, r2
+
+    def factor(self, theta):
+        self.theta = theta
+        m, n = self.m, self.n
+        if self.dense:
+            K = np.zeros((n + m, n + m))
+            K[:n, :n] = -self.Qd
+            K[np.arange(n), np.arange(n)] -= 1.0 / theta
+            K[:n, n:] = self.Ad.T
+            K[n:, :n] = self.Ad
+            K[np.arange(n, n + m), np.arange(n, n + m)] = self.delta
+            self.lu = la.lu_factor(K, check_finite=False)
+        else:
+            H = -(self.Q + sp.diags(1.0 / theta))
+            K = sp.bmat([[H, self.A.T], [self.A, self.delta * sp.identity(m)]],
+                        format="csc")
+            self.lu = spla.splu(K, permc_spec="MMD_AT_PLUS_A")
+
+    def _solve(self, r):
+        if self.dense:
+            return la.lu_solve(self.lu, r, check_finite=False)
+        return self.lu.solve(r)
+
+    def solve(self, r1, r2):
+        n = self.n
+        r = np.concatenate([r1, r2])
+        s = self._solve(r)
+        rn = np.linalg.norm(r)
+        for _ in range(self.refine):
+            a, b = self.matvec(s[:n], s[n:])
+            res = r - np.concatenate([a, b])
+            if np.linalg.norm(res) <= 1e-14 * max(rn, 1e-300):
+                break
+            s = s + self._solve(res)
+        return s[:n], s[n:]
