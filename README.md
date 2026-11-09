@@ -22,7 +22,7 @@ All 91 problems in [coin-or-tools/Data-Netlib](https://github.com/coin-or-tools/
 | iterations among optimal: median / max | 13 / 34 |
 | total time: this solver / HiGHS | 394 s / 8.3 s |
 
-The one failure is DFL001 (6071 x 12230). After 200 iterations it stops with status `inaccurate`, 5e-5 away from the optimum. It is the most degenerate problem in the set.
+The one failure is DFL001 (6071 x 12230). After 200 iterations it stops with status `inaccurate`, 5e-5 away from the optimum. It is the most degenerate problem in the set. With a primal regularization of 1e-15 and a per-row pivot tolerance of 1e-16 it solves in 69 iterations, but that setting loses DEGEN3. No single setting I tried solves all 91.
 
 For every solution, the full KKT conditions are also checked on the original problem, after postsolve and unscaling: primal feasibility, dual sign conditions and the duality gap. For 88 of the 90 optimal problems every residual is below 1e-8. The largest is WOOD1P at 6.6e-7 (primal).
 

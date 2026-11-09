@@ -138,7 +138,9 @@ Each item was found on a specific test and fixed by changing one thing.
 4. **Primal regularization of 1e-10.** This caps Theta at 1e10. When a column hits the cap, its dual residual cannot go below about `1e-10 * |dx_j|`. On FINNIS and PILOT the dual residual sat at about 5e-8 while the objective drifted by a constant amount each iteration. Removing the cap entirely broke GREENBEA instead: 340 of 2316 pivots were skipped and the steps collapsed to 1e-50.
 5. **Pivot test relative to the largest diagonal only.** With Theta spanning 40 orders of magnitude, rows whose scale is far below the largest one were either never caught or caught wholesale. Adding a test relative to each row's own diagonal (1e-14), together with a cap of 1e14 on Theta (reg 1e-14), solved all ten hard problems in the sweep. Neighbouring values from 3e-15 to 1e-14 behave the same; larger caps lose GREENBEA.
 
-The sweeps behind items 3 to 5 used 300 random LPs with every row and bound type, checked against HiGHS, plus the hard Netlib problems: FINNIS, GREENBEA, GREENBEB, PILOT, DEGEN3, PILOT87, CYCLE, PEROLD, D2Q06C, WOOD1P.
+6. **DFL001 is still open.** With the defaults it reaches a 1e-4 gap by iteration 30. It then crawls, skipping 70 to 90 pivots per factorization. A primal regularization of 1e-15 with a pivot tolerance of 1e-16 solves it in 69 iterations but leaves DEGEN3 3e-8 short of tolerance. Using 1e-15 for both keeps DEGEN3 but leaves DFL001 at 1.2e-8 after 200 iterations. A retry with a second setting after a failure would probably reach 91 of 91, but that tunes the solver to this benchmark, so it is left out.
+
+The sweeps behind items 3 to 6 used 300 random LPs with every row and bound type, checked against HiGHS, plus the hard Netlib problems: FINNIS, GREENBEA, GREENBEB, PILOT, DEGEN3, PILOT87, CYCLE, PEROLD, D2Q06C, WOOD1P.
 
 ## References
 
