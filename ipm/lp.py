@@ -1,7 +1,11 @@
-"""Mehrotra predictor-corrector interior point method for standard-form LPs.
+"""Mehrotra predictor-corrector interior point method in standard form.
 
-    primal:  min c'x   s.t.  A x = b,  x_B >= 0,  x_U + w = u,  w >= 0
-    dual:    max b'y - u'v   s.t.  A'y + z - E v = c,  z_B >= 0,  v >= 0
+    primal:  min c'x + x'Qx/2   s.t.  A x = b,  x_B >= 0,  x_U + w = u,  w >= 0
+    dual:    max b'y - u'v - x'Qx/2   s.t.  A'y + z - E v - Qx = c,
+                                          z_B >= 0,  v >= 0
+
+Q = None is a linear program. For an LP the Newton system is reduced to
+the normal equations; for a QP the augmented system is factored instead.
 
 B is the set of sign-constrained columns (the rest are free and have no
 z), U the set of columns with a finite upper bound, and E places v on U.
@@ -28,8 +32,9 @@ linsys.py, was chosen on the hard Netlib problems; see the README.
 from dataclasses import dataclass, field
 
 import numpy as np
+import scipy.sparse as sp
 
-from .linsys import NormalEquations
+from .linsys import AugmentedSystem, NormalEquations
 
 
 @dataclass
@@ -55,7 +60,7 @@ def _max_step(x, dx):
     return float(np.min(-x[neg] / dx[neg]))
 
 
-def solve_standard(A, b, c, u, free=None, tol=1e-8, max_iter=200,
+def solve_standard(A, b, c, u, free=None, Q=None, tol=1e-8, max_iter=200,
                    verbose=False, eta=0.9995, reg_primal=1e-14,
                    reg_free=1e-8, dense_limit=9000, correctors=2,
                    piv_tiny=1e-30, piv_rel=1e-14):
@@ -70,6 +75,10 @@ def solve_standard(A, b, c, u, free=None, tol=1e-8, max_iter=200,
     N = max(int(B.sum()) + nU, 1)
     At = A.T.tocsr()
     ne = NormalEquations(A, dense_limit=dense_limit, tiny=piv_tiny, rel=piv_rel)
+    if Q is not None:
+        Q = sp.csr_matrix(Q)
+        kkt = AugmentedSystem(A, Q)
+    quad = (lambda x: 0.5 * float(x @ (Q @ x))) if Q is not None else (lambda x: 0.0)
     bnorm = 1.0 + np.linalg.norm(b)
     cnorm = 1.0 + np.linalg.norm(c)
     unorm = 1.0 + (np.linalg.norm(uU) if nU else 0.0)
@@ -103,14 +112,17 @@ def solve_standard(A, b, c, u, free=None, tol=1e-8, max_iter=200,
     def residuals(x, w, y, z, v):
         rb = b - A @ x
         rc = c - At @ y - z
+        if Q is not None:
+            rc += Q @ x
         rc[U] += v
         ru = uU - x[U] - w
         return rb, rc, ru
 
     def measures(x, w, y, z, v):
         rb, rc, ru = residuals(x, w, y, z, v)
-        pobj = float(c @ x)
-        dobj = float(b @ y - uU @ v)
+        q = quad(x)
+        pobj = float(c @ x) + q
+        dobj = float(b @ y - uU @ v) - q
         relp = np.linalg.norm(rb) / bnorm + (np.linalg.norm(ru) / unorm if nU else 0.0)
         reld = np.linalg.norm(rc) / cnorm
         gap = abs(pobj - dobj) / (1.0 + abs(pobj))
@@ -152,14 +164,20 @@ def solve_standard(A, b, c, u, free=None, tol=1e-8, max_iter=200,
         dinv[free] = reg_free
         dinv[U] += v / w
         theta = 1.0 / (dinv + reg_primal)
-        ne.factor(theta)
+        if Q is None:
+            ne.factor(theta)
+        else:
+            kkt.factor(theta)
 
         def newton(rxz, rwv):
             rt = rc.copy()
             rt[B] -= rxz[B] / x[B]
             rt[U] += (rwv - v * ru) / w
-            dy = ne.solve(rb + A @ (theta * rt))
-            dx = theta * (At @ dy - rt)
+            if Q is None:
+                dy = ne.solve(rb + A @ (theta * rt))
+                dx = theta * (At @ dy - rt)
+            else:
+                dx, dy = kkt.solve(rt, rb)
             dz = np.zeros(n)
             dz[B] = (rxz[B] - z[B] * dx[B]) / x[B]
             dw = ru - dx[U]

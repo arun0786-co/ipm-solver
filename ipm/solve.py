@@ -29,10 +29,18 @@ class Result:
                 f"iterations={self.iterations}, time={self.time:.3f}s)")
 
 
-def solve(lp: LinearProgram, tol=1e-8, presolve_on=True, scaling=True,
+def solve(lp: LinearProgram, Q=None, tol=1e-8, presolve_on=True, scaling=True,
           max_iter=200, verbose=False, correctors=2):
+    """Solve  min c'x + x'Qx/2 + c0  s.t.  rl <= Ax <= ru,  l <= x <= u.
+
+    Q must be symmetric positive semidefinite; Q=None is an LP. Presolve
+    is LP-only and is skipped when Q is given.
+    """
     t0 = time.perf_counter()
     info = {"shape": lp.shape, "nnz": lp.A.nnz}
+    if Q is not None:
+        Q = sp.csr_matrix(Q, dtype=float)
+        presolve_on = False
 
     if presolve_on:
         pre = presolve(lp)
@@ -47,8 +55,18 @@ def solve(lp: LinearProgram, tol=1e-8, presolve_on=True, scaling=True,
 
     sf = to_standard(red)
     info["standard_shape"] = sf.A.shape
+    Qs = None
+    if Q is not None:
+        # x = offset + sign * x'  gives  Q' = S Q S  and  c' += S Q offset
+        S = sp.diags(sf.sign)
+        N = sf.A.shape[1]
+        n = lp.shape[1]
+        Qs = sp.block_diag([S @ Q @ S, sp.csr_matrix((N - n, N - n))], format="csr")
+        sf.c = sf.c.copy()
+        sf.c[:n] += sf.sign * (Q @ sf.offset)
+        sf.c0 += 0.5 * float(sf.offset @ (Q @ sf.offset))
 
-    if sf.A.shape[0] == 0 or sf.A.shape[1] == 0:
+    if (sf.A.shape[0] == 0 or sf.A.shape[1] == 0) and Q is None:
         # everything was removed in presolve; minimize over the bounds
         xs = np.where(sf.c >= 0, 0.0, sf.u)
         if not np.all(np.isfinite(xs)):
@@ -61,7 +79,8 @@ def solve(lp: LinearProgram, tol=1e-8, presolve_on=True, scaling=True,
         else:
             r, s = np.ones(sf.A.shape[0]), np.ones(sf.A.shape[1])
         As = (sp.diags(r) @ sf.A @ sp.diags(s)).tocsr()
-        res = solve_standard(As, r * sf.b, s * sf.c, sf.u / s, free=sf.free, tol=tol,
+        Qh = None if Qs is None else (sp.diags(s) @ Qs @ sp.diags(s)).tocsr()
+        res = solve_standard(As, r * sf.b, s * sf.c, sf.u / s, free=sf.free, Q=Qh, tol=tol,
                              max_iter=max_iter, verbose=verbose,
                              correctors=correctors)
         xs = s * res.x
@@ -79,16 +98,21 @@ def solve(lp: LinearProgram, tol=1e-8, presolve_on=True, scaling=True,
     else:
         x, y = x_red, y_red
         z = lp.c - lp.A.T @ y
+        if Q is not None:
+            z = z + Q @ x
 
-    out = Result(status=status, x=x, y=y, z=z, objective=lp.objective(x),
+    obj = lp.objective(x) + (0.5 * float(x @ (Q @ x)) if Q is not None else 0.0)
+    out = Result(status=status, x=x, y=y, z=z, objective=obj,
                  iterations=iters, info=info)
-    out.kkt = kkt_check(lp, x, y, z)
+    out.kkt = kkt_check(lp, x, y, z, Q)
     out.time = time.perf_counter() - t0
     return out
 
 
-def kkt_check(lp: LinearProgram, x, y, z):
+def kkt_check(lp: LinearProgram, x, y, z, Q=None):
     """Relative KKT residuals of (x, y, z) for the original problem.
+
+    z must be the reduced cost c + Qx - A'y.
 
     primal: largest bound or row violation, relative to the data
     dual:   largest wrong-signed multiplier, relative to |c|
@@ -114,8 +138,13 @@ def kkt_check(lp: LinearProgram, x, y, z):
         f = np.isfinite(bound)
         return float(mult[f] @ bound[f])
 
-    pobj = lp.objective(x)
+    q = 0.5 * float(x @ (Q @ x)) if Q is not None else 0.0
+    pobj = lp.objective(x) + q
     dobj = (dot(y_lo, lp.rl) - dot(y_hi, lp.ru) + dot(z_lo, lp.l)
-            - dot(z_hi, lp.u) + lp.c0)
+            - dot(z_hi, lp.u) + lp.c0 - q)
+    # stationarity is part of the dual check for a QP
+    if Q is not None:
+        stat = np.max(np.abs(lp.c + Q @ x - lp.A.T @ y - z), initial=0.0)
+        dual = max(dual, stat / scale_d)
     gap = abs(pobj - dobj) / (1.0 + abs(pobj))
     return dict(primal=primal, dual=dual, gap=gap, pobj=pobj, dobj=dobj)
