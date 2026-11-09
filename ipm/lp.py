@@ -233,6 +233,9 @@ def solve_standard(A, b, c, u, free=None, tol=1e-8, max_iter=200,
     if status != "optimal" and best is not None:
         _, x, w, y, z, v = best
         _, _, _, pobj, dobj, relp, reld, gap = measures(x, w, y, z, v)
+        # stopped early but close: report it the way commercial solvers do
+        if max(relp, reld, gap) < np.sqrt(tol):
+            status = "inaccurate"
 
     vfull = np.zeros(n)
     vfull[U] = v
