@@ -29,6 +29,9 @@ class LinearProgram:
     def __post_init__(self):
         self.c = np.asarray(self.c, dtype=float)
         self.A = sp.csr_matrix(self.A, dtype=float)
+        # explicit zeros (MPS files do contain them) would look like
+        # structural nonzeros to presolve and make it divide by zero
+        self.A.eliminate_zeros()
         m, n = self.A.shape
         self.rl = _vec(self.rl, m, -np.inf)
         self.ru = _vec(self.ru, m, np.inf)
